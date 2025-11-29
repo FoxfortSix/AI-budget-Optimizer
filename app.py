@@ -114,45 +114,48 @@ def render_chat():
 
 
 # ------------------------------------------------------------
-# EXTRACT INCOME FROM USER TEXT
+# EXTRACT INCOME FROM USER TEXT (REVISED)
 # ------------------------------------------------------------
 def try_detect_income(text: str) -> Optional[int]:
     """
-    Deteksi income dari berbagai format:
-    - "700 ribu"
-    - "700rb"
-    - "700k"
-    - "0.7 juta"
-    - "700000"
+    Deteksi income yang lebih cerdas (handle teks bebas dan posisi di mana saja).
     """
+    import re
 
-    t = text.lower().replace(" ", "")
+    t = text.lower()
+    
+    # 1. Cek format "X juta" (misal: "gaji 4 juta", "4.5juta")
+    # Gunakan re.search (bukan match) agar bisa deteksi di tengah kalimat
+    m_juta = re.search(r"(\d+[.,]?\d*)\s*juta", t)
+    if m_juta:
+        val_str = m_juta.group(1).replace(",", ".")
+        return int(float(val_str) * 1_000_000)
 
-    # --- Format "700rib(u)", "700rb", "700k"
-    m = re.match(r"(\d+)(ribu|rb|k)$", t)
-    if m:
-        return int(m.group(1)) * 1000
+    # 2. Cek format "X ribu", "X rb", "X k"
+    m_ribu = re.search(r"(\d+)\s*(ribu|rb|k)\b", t)
+    if m_ribu:
+        return int(m_ribu.group(1)) * 1000
 
-    # --- Format "0.7juta", "0,7juta"
-    m = re.match(r"(\d+[.,]?\d*)(juta)$", t)
-    if m:
-        val = float(m.group(1).replace(",", "."))
-        return int(val * 1_000_000)
-
-    # --- Format angka murni
-    nums = re.findall(r"\d+", text)
+    # 3. Format angka murni (misal 4000000)
+    # Hapus titik/koma ribuan dulu
+    clean_text = text.replace(".", "").replace(",", "") 
+    nums = re.findall(r"\d+", clean_text)
+    
     if not nums:
         return None
 
-    # Ambil angka terbesar (biasanya income)
+    # Ambil angka terbesar
     n = max(int(x) for x in nums)
 
-    # Jika masih terlalu kecil (<100.000), anggap ribuan
-    if n < 100_000:
-        return n * 1000
+    # Logika fallback: 
+    # Jika angka sangat kecil (< 100), kemungkinan user nulis "gaji 5" (maksudnya 5 juta)
+    # Logic lama (n * 1000) kita ganti biar lebih aman.
+    if n < 1000: 
+        if n < 100: 
+            return n * 1_000_000 # Asumsi "gaji 5" = 5 juta
+        return n * 1000 
 
     return n
-
 
 # ------------------------------------------------------------
 # CHECK IF READY FOR BASELINE
@@ -364,54 +367,59 @@ def show_baseline_mode():
 
 # Button → go to solver
 if st.button("Run Solver"):
-    # 1. Import dari path yang benar (genai, bukan solver)
-    from budget_optimizer.genai.ai_router import AIRouter
-    from budget_optimizer.config import MINIMUMS
+    # --- PERBAIKAN DI SINI: Cek dulu apakah baseline sudah ada ---
+    if st.session_state.get("baseline") is None:
+        st.error("⚠️ Data baseline belum lengkap! Silakan chat dengan AI dulu sampai tabel baseline muncul.")
+    else:
+        # Jika baseline sudah ada, baru jalankan logika solver
+        
+        # 1. Import dari path yang benar
+        from budget_optimizer.genai.ai_router import AIRouter
+        from budget_optimizer.config import MINIMUMS
 
-    router = AIRouter()
+        router = AIRouter()
 
-    # 2. Siapkan data sesuai signature AIRouter.solve (state, income, minimums, target, delta)
-    #    Note: AIRouter tidak menerima parameter 'prefs', jadi kita hapus.
-    baseline_data = st.session_state["baseline"]  # Gunakan key dict, bukan attribute
-    income_val = st.session_state["detected_income"]
-    target_val = st.session_state.get("target_tabungan", 0)
-    delta_val = st.session_state.get("delta", 50000)
+        # 2. Siapkan data
+        baseline_data = st.session_state["baseline"]
+        income_val = st.session_state["detected_income"]
+        target_val = st.session_state.get("target_tabungan", 0)
+        delta_val = st.session_state.get("delta", 50000)
 
-    with st.spinner("Sedang mencari solusi anggaran terbaik..."):
-        result = router.solve(
-            state=baseline_data,
-            income=income_val,
-            minimums=MINIMUMS,
-            target=target_val,
-            delta=delta_val,
-        )
+        with st.spinner("Sedang mencari solusi anggaran terbaik..."):
+            result = router.solve(
+                state=baseline_data,
+                income=income_val,
+                minimums=MINIMUMS,
+                target=target_val,
+                delta=delta_val,
+            )
 
-    # 3. Simpan hasil ke session state (Mapping output AIRouter ke variabel UI Anda)
-    st.session_state.final_budget = result.get("final_state")
-    st.session_state.solver_trace = result.get("trace")
-    # AIRouter tidak me-return 'constraints' eksplisit, kita pakai MINIMUMS
-    st.session_state.solver_constraints = MINIMUMS
+        # 3. Simpan hasil ke session state
+        st.session_state.final_budget = result.get("final_state")
+        st.session_state.solver_trace = result.get("trace")
+        st.session_state.solver_constraints = MINIMUMS
 
-    # Simpan juga ke solver_output agar kompatibel dengan logika main loop
-    st.session_state["solver_output"] = {
-        "result": result,
-        "final_state": result.get("final_state"),
-    }
+        # Simpan juga ke solver_output agar kompatibel dengan logika main loop
+        st.session_state["solver_output"] = {
+            "result": result,
+            "final_state": result.get("final_state"),
+        }
 
-    st.success("Solver selesai dijalankan!")
-    st.rerun()  # Refresh agar UI berpindah ke tampilan hasil
+        st.success("Solver selesai dijalankan!")
+        st.rerun()  # Refresh agar UI berpindah ke tampilan hasil
 
-    if st.session_state.final_budget is not None:
-        with st.expander("🧮 Solver Panel", expanded=True):
+# Bagian tampilan panel ini tetap di luar "if st.button" agar tetap muncul setelah rerun
+if st.session_state.get("final_budget") is not None:
+    with st.expander("🧮 Solver Panel", expanded=True):
 
-            st.subheader("Final Budget")
-            st.json(st.session_state.final_budget)
+        st.subheader("Final Budget")
+        st.json(st.session_state.final_budget)
 
-            st.subheader("Trace")
-            st.json(st.session_state.solver_trace)
+        st.subheader("Trace")
+        st.json(st.session_state.solver_trace)
 
-            st.subheader("Constraints")
-            st.json(st.session_state.solver_constraints)
+        st.subheader("Constraints")
+        st.json(st.session_state.solver_constraints)
 
 # ================================
 # 🔍 VISUALIZER PANEL (NEW PATCH)
@@ -686,19 +694,29 @@ st.subheader("⚙️ Terapkan Baseline ke Optimization Engine")
 
 # Tombol untuk menjalankan solver setelah baseline dibuat
 if st.button("🚀 Jalankan Optimasi"):
-    if "baseline" not in st.session_state:
-        st.warning("❗ Baseline AI belum tersedia. Lanjut chat dulu sampai selesai ya!")
+    # --- PERBAIKAN: Cek apakah nilainya None, bukan cuma cek key-nya ---
+    if st.session_state.get("baseline") is None:
+        st.warning("❗ Baseline AI belum tersedia. Lanjut chat dulu sampai tabel baseline muncul ya!")
+    elif st.session_state.get("detected_income") is None:
+        st.warning("❗ Income belum terdeteksi. Pastikan Anda menyebutkan penghasilan saat chat.")
     else:
         with st.spinner("Menjalankan solver..."):
+            # Pastikan mengambil nilai default jika target/delta belum ada
+            tgt = st.session_state.get("target_tabungan", 0)
+            dlt = st.session_state.get("delta", 50000)
+            
             pipe = run_solver_pipeline(
                 baseline_dict=st.session_state["baseline"],
-                income=st.session_state.detected_income,
+                income=st.session_state["detected_income"],
                 minimums=MINIMUMS,
-                target_tabungan=st.session_state.get("target_tabungan", 0),
-                delta=st.session_state.get("delta", 50000),
+                target_tabungan=tgt,
+                delta=dlt,
             )
+            
         st.session_state["solver_output"] = pipe
         st.success("🎉 Optimasi selesai!")
+        
+        # Tampilkan hasil JSON pipeline
         st.json(pipe)
 
 # ============================================================

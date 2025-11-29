@@ -20,9 +20,8 @@ from typing import Dict, Any, Optional
 
 # ============================================================
 # KONFIGURASI GEMINI API
-# (USER harus mengisi ini MANUAL — saya tidak bisa isi otomatis)
 # ============================================================
-GEMINI_API_KEY = "AIzaSyBAOnT1bgzB7oiv4DfWX2WVgiKxY-g2I4A"  # Pastikan Key ini benar
+GEMINI_API_KEY = "AIzaSyDsDRVObmlcM5YcJnqcba_ToG_vNu1C_HY"  # API 
 GEMINI_MODEL = "gemini-2.0-flash"  # Update ke model yang lebih baru/stabil
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
 
