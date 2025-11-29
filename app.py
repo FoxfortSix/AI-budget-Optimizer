@@ -45,7 +45,7 @@ st.title("💬 Smart Budget Assistant (Chat Mode)")
 # - detected_income: int or None
 # - detected_prefs: dict or None
 # - ai_ready_for_baseline: bool
-# - baseline: dict (baseline amounts)        <-- canonical name
+# - baseline: dict (baseline amounts)        
 # - run_optimizer: bool
 # - solver_output: dict (result from router)
 # - target_tabungan: int (optional)
@@ -102,7 +102,6 @@ def rupiah(x: int) -> str:
 # PART 2 — CHAT UTILITIES & AI DETECTION ENGINE
 # ============================================================
 
-
 # ------------------------------------------------------------
 # RENDER CHAT HISTORY
 # ------------------------------------------------------------
@@ -111,7 +110,6 @@ def render_chat():
     for msg in st.session_state["messages"]:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
-
 
 # ------------------------------------------------------------
 # EXTRACT INCOME FROM USER TEXT (REVISED)
