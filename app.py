@@ -509,6 +509,69 @@ if (
 
     st.pyplot(fig3)
 
+# ================================
+# 🤝 ADVISOR PANEL (AI Suggestions)
+# ================================
+if (
+    st.session_state.get("final_budget") is not None
+    and st.session_state.get("baseline") is not None
+    and st.session_state.get("detected_prefs") is not None
+):
+
+    st.markdown("## 🤝 Advisor Panel — AI Generated Suggestions")
+
+    from budget_optimizer.genai.advisor import generate_advice
+
+    baseline = st.session_state["baseline"]
+    final_state = st.session_state["final_budget"]
+    prefs = st.session_state["detected_prefs"]
+    target_saving = st.session_state.get("target_tabungan", 0)
+
+    # Gabungkan state untuk diberikan ke AI Advisor
+    state_for_ai = {
+        "baseline": baseline,
+        "final_budget": final_state,
+        "income": st.session_state.get("detected_income", 0),
+    }
+
+    with st.spinner("AI sedang menganalisis kondisi keuanganmu..."):
+        advice = generate_advice(
+            state=state_for_ai, prefs=prefs, target_saving=target_saving
+        )
+
+    # -------------------------------
+    # Tampilkan Advice Summary
+    # -------------------------------
+    st.subheader("💡 Advice Summary")
+    st.write(advice.get("summary", ""))
+
+    # -------------------------------
+    # Priority Suggestions (bullet)
+    # -------------------------------
+    priorities = advice.get("priority_suggestion", [])
+    if priorities:
+        st.subheader("🔥 Priority Suggestions")
+        for item in priorities:
+            st.write(f"- {item}")
+
+    # -------------------------------
+    # Saving Tips (bullet)
+    # -------------------------------
+    saving = advice.get("saving_tips", [])
+    if saving:
+        st.subheader("💰 Saving Tips")
+        for tip in saving:
+            st.write(f"- {tip}")
+
+    # -------------------------------
+    # Risk Notes (bullet)
+    # -------------------------------
+    risks = advice.get("risk_notes", [])
+    if risks:
+        st.subheader("⚠️ Potential Risks")
+        for r in risks:
+            st.write(f"- {r}")
+
 
 # =====================================================
 # 📘 EVALUATOR PANEL  —  Budget Health & Suggestions
