@@ -13,10 +13,10 @@ CATEGORIES = [
 # Hard minimums (digunakan CSP + preference minimal)
 MINIMUMS = {
     "kos": 0,
-    "makan": 650000,
+    "makan": 0,
     "transport": 10000,
     "internet": 5000,
-    "tabungan": 30000,
+    "tabungan": 0,
     "jajan": 0,
     "hiburan": 0,
 }

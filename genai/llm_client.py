@@ -21,7 +21,7 @@ from typing import Dict, Any, Optional
 # ============================================================
 # KONFIGURASI GEMINI API
 # ============================================================
-GEMINI_API_KEY = "AIzaSyDsDRVObmlcM5YcJnqcba_ToG_vNu1C_HY"  # API 
+GEMINI_API_KEY = "PASTE API KEY DISINI"  # Pastikan Key ini benar
 GEMINI_MODEL = "gemini-2.0-flash"  # Update ke model yang lebih baru/stabil
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -58,9 +58,18 @@ def _make_request(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             if res.status_code == 200:
                 return res.json()
 
+            # --- TAMBAHAN DEBUGGING ---
+            else:
+                print(f"DEBUG ERROR: Status Code {res.status_code}")
+                print(f"Response: {res.text}")
+            # --------------------------
+
             time.sleep(1)  # retry delay
 
-        except Exception:
+        except Exception as e:  # Tangkap errornya sebagai 'e'
+            # --- TAMBAHAN DEBUGGING ---
+            print(f"DEBUG EXCEPTION: {e}")
+            # --------------------------
             time.sleep(1)
             continue
 

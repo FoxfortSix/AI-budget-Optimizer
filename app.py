@@ -45,7 +45,7 @@ st.title("💬 Smart Budget Assistant (Chat Mode)")
 # - detected_income: int or None
 # - detected_prefs: dict or None
 # - ai_ready_for_baseline: bool
-# - baseline: dict (baseline amounts)        
+# - baseline: dict (baseline amounts)
 # - run_optimizer: bool
 # - solver_output: dict (result from router)
 # - target_tabungan: int (optional)
@@ -75,7 +75,7 @@ if "solver_output" not in st.session_state:
     st.session_state["solver_output"] = None
 
 if "target_tabungan" not in st.session_state:
-    st.session_state["target_tabungan"] = 300000
+    st.session_state["target_tabungan"] = 0
 
 if "delta" not in st.session_state:
     st.session_state["delta"] = 50000
@@ -102,6 +102,7 @@ def rupiah(x: int) -> str:
 # PART 2 — CHAT UTILITIES & AI DETECTION ENGINE
 # ============================================================
 
+
 # ------------------------------------------------------------
 # RENDER CHAT HISTORY
 # ------------------------------------------------------------
@@ -110,6 +111,7 @@ def render_chat():
     for msg in st.session_state["messages"]:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
+
 
 # ------------------------------------------------------------
 # EXTRACT INCOME FROM USER TEXT (REVISED)
@@ -121,7 +123,7 @@ def try_detect_income(text: str) -> Optional[int]:
     import re
 
     t = text.lower()
-    
+
     # 1. Cek format "X juta" (misal: "gaji 4 juta", "4.5juta")
     # Gunakan re.search (bukan match) agar bisa deteksi di tengah kalimat
     m_juta = re.search(r"(\d+[.,]?\d*)\s*juta", t)
@@ -136,24 +138,25 @@ def try_detect_income(text: str) -> Optional[int]:
 
     # 3. Format angka murni (misal 4000000)
     # Hapus titik/koma ribuan dulu
-    clean_text = text.replace(".", "").replace(",", "") 
+    clean_text = text.replace(".", "").replace(",", "")
     nums = re.findall(r"\d+", clean_text)
-    
+
     if not nums:
         return None
 
     # Ambil angka terbesar
     n = max(int(x) for x in nums)
 
-    # Logika fallback: 
+    # Logika fallback:
     # Jika angka sangat kecil (< 100), kemungkinan user nulis "gaji 5" (maksudnya 5 juta)
     # Logic lama (n * 1000) kita ganti biar lebih aman.
-    if n < 1000: 
-        if n < 100: 
-            return n * 1_000_000 # Asumsi "gaji 5" = 5 juta
-        return n * 1000 
+    if n < 1000:
+        if n < 100:
+            return n * 1_000_000  # Asumsi "gaji 5" = 5 juta
+        return n * 1000
 
     return n
+
 
 # ------------------------------------------------------------
 # CHECK IF READY FOR BASELINE
@@ -362,15 +365,22 @@ def show_baseline_mode():
     st.write("### 💵 Baseline (Sudah di-scale)")
     st.json(baseline)
 
+    if st.session_state.get("target_tabungan"):
+        st.info(
+            f"🎯 Target tabungan terdeteksi: Rp {st.session_state['target_tabungan']:,.0f}"
+        )
+
 
 # Button → go to solver
 if st.button("Run Solver"):
     # --- PERBAIKAN DI SINI: Cek dulu apakah baseline sudah ada ---
     if st.session_state.get("baseline") is None:
-        st.error("⚠️ Data baseline belum lengkap! Silakan chat dengan AI dulu sampai tabel baseline muncul.")
+        st.error(
+            "⚠️ Data baseline belum lengkap! Silakan chat dengan AI dulu sampai tabel baseline muncul."
+        )
     else:
         # Jika baseline sudah ada, baru jalankan logika solver
-        
+
         # 1. Import dari path yang benar
         from budget_optimizer.genai.ai_router import AIRouter
         from budget_optimizer.config import MINIMUMS
@@ -472,19 +482,6 @@ if (
 
     import matplotlib.pyplot as plt
 
-    # -------------------------------
-    # 1. BASELINE PIE CHART
-    # -------------------------------
-    st.subheader("🥧 Baseline Pie Chart")
-
-    fig1, ax1 = plt.subplots(figsize=(6, 6))
-    ax1.pie(baseline_state.values(), labels=baseline_state.keys(), autopct="%1.1f%%")
-    ax1.set_title("Baseline Budget Distribution")
-    st.pyplot(fig1)
-
-    # -------------------------------
-    # 2. FINAL PIE CHART
-    # -------------------------------
     st.subheader("🥧 Final Budget Pie Chart")
 
     fig2, ax2 = plt.subplots(figsize=(6, 6))
@@ -492,91 +489,318 @@ if (
     ax2.set_title("Optimized Final Budget Distribution")
     st.pyplot(fig2)
 
-    # -------------------------------
-    # 3. BEFORE-AFTER COMPARISON BAR CHART
-    # -------------------------------
-    st.subheader("📈 Before vs After Budget Comparison")
-
-    categories = list(baseline_state.keys())
-    before = [baseline_state[c] for c in categories]
-    after = [final_state[c] for c in categories]
-
-    x = range(len(categories))
-
-    fig3, ax3 = plt.subplots(figsize=(10, 5))
-    ax3.bar(x, before, width=0.4, label="Baseline")
-    ax3.bar([i + 0.4 for i in x], after, width=0.4, label="Final")
-
-    ax3.set_xticks([i + 0.2 for i in x])
-    ax3.set_xticklabels(categories, rotation=45)
-    ax3.set_ylabel("Amount (Rp)")
-    ax3.set_title("Before vs After — Budget Comparison")
-    ax3.legend()
-
-    st.pyplot(fig3)
-
 # ================================
-# 🤝 ADVISOR PANEL (AI Suggestions)
+# 🤝 ADVISOR PANEL (AI Suggestions) — FULL PACKAGE
 # ================================
 if (
     st.session_state.get("final_budget") is not None
     and st.session_state.get("baseline") is not None
     and st.session_state.get("detected_prefs") is not None
 ):
-
-    st.markdown("## 🤝 Advisor Panel — AI Generated Suggestions")
-
-    from budget_optimizer.genai.advisor import generate_advice
+    st.markdown("## 🤝 Advisor Panel — AI Generated Insights")
 
     baseline = st.session_state["baseline"]
     final_state = st.session_state["final_budget"]
     prefs = st.session_state["detected_prefs"]
+    income = st.session_state.get("detected_income", 0)
     target_saving = st.session_state.get("target_tabungan", 0)
 
-    # Gabungkan state untuk diberikan ke AI Advisor
+    # Gabungkan state untuk AI Advisor
     state_for_ai = {
         "baseline": baseline,
         "final_budget": final_state,
-        "income": st.session_state.get("detected_income", 0),
+        "income": income,
     }
 
-    with st.spinner("AI sedang menganalisis kondisi keuanganmu..."):
+    from budget_optimizer.genai.advisor import generate_advice
+
+    with st.spinner("AI sedang membaca kondisi finansialmu..."):
         advice = generate_advice(
             state=state_for_ai, prefs=prefs, target_saving=target_saving
         )
 
-    # -------------------------------
-    # Tampilkan Advice Summary
-    # -------------------------------
+    # -----------------------------------------
+    # 1. Summary (Natural Text, Fun Tone)
+    # -----------------------------------------
     st.subheader("💡 Advice Summary")
-    st.write(advice.get("summary", ""))
+    st.write(advice.get("summary", "Tidak ada ringkasan."))
 
-    # -------------------------------
-    # Priority Suggestions (bullet)
-    # -------------------------------
+    # -----------------------------------------
+    # 2. Priority Suggestions (Clean Bullets)
+    # -----------------------------------------
     priorities = advice.get("priority_suggestion", [])
     if priorities:
         st.subheader("🔥 Priority Suggestions")
-        for item in priorities:
-            st.write(f"- {item}")
+        for p in priorities:
+            st.write(f"- {p}")
 
-    # -------------------------------
-    # Saving Tips (bullet)
-    # -------------------------------
+    # -----------------------------------------
+    # 3. Saving Tips
+    # -----------------------------------------
     saving = advice.get("saving_tips", [])
     if saving:
         st.subheader("💰 Saving Tips")
-        for tip in saving:
-            st.write(f"- {tip}")
+        for s in saving:
+            st.write(f"- {s}")
 
-    # -------------------------------
-    # Risk Notes (bullet)
-    # -------------------------------
+    # -----------------------------------------
+    # 4. Risk Notes
+    # -----------------------------------------
     risks = advice.get("risk_notes", [])
     if risks:
         st.subheader("⚠️ Potential Risks")
         for r in risks:
             st.write(f"- {r}")
+
+    # ============================================================
+    # 🔍 ADVANCED ANALYTICS — Full Financial Insight Layer
+    # ============================================================
+
+    st.markdown("---")
+    st.markdown("## 📘 Deep Financial Insights")
+
+    # -----------------------------------------
+    # DAILY BURN RATE
+    # -----------------------------------------
+    st.subheader("⏳ Daily Burn Rate (Perkiraan Pengeluaran Harian)")
+
+    if income > 0:
+        daily = income / 30
+        st.write(f"Perkiraan batas aman pengeluaran harian kamu: **Rp {daily:,.0f}**")
+    else:
+        st.write("Income tidak terdeteksi, tidak bisa hitung burn rate.")
+
+    # -----------------------------------------
+    # CATEGORY-LEVEL INSIGHTS
+    # -----------------------------------------
+    st.subheader("📊 Category Breakdown Insights")
+
+    total_final = sum(final_state.values())
+    percentages = {
+        k: (v / total_final * 100 if total_final > 0 else 0)
+        for k, v in final_state.items()
+    }
+
+    st.write("### Persentase tiap kategori")
+    st.json(percentages)
+
+    # --- Detect dangerously high categories ---
+    st.write("### Deteksi Pengeluaran Berisiko Tinggi")
+    risky = [(k, p) for k, p in percentages.items() if p > 40]
+
+    if risky:
+        st.error("⚠️ Ada kategori yang memakan lebih dari 40%!")
+        for k, p in risky:
+            st.write(f"- **{k}**: {p:.1f}% dari total budget")
+    else:
+        st.success("Tidak ada kategori yang terlalu mendominasi 🎉")
+
+    # -----------------------------------------
+    # SAVING PROJECTION (Monthly → 12 Months)
+    # -----------------------------------------
+    st.subheader("📈 Saving Projection (12 Bulan)")
+
+    if "Tabungan" in final_state:
+        monthly = final_state["Tabungan"]
+        yearly = monthly * 12
+        st.write(f"- Tabungan per bulan: **Rp {monthly:,.0f}**")
+        st.write(f"- Jika konsisten selama 1 tahun: **Rp {yearly:,.0f}**")
+    else:
+        st.info("Kategori Tabungan tidak ditemukan.")
+
+    # -----------------------------------------
+    # SMART REBALANCING SUGGESTIONS
+    # -----------------------------------------
+    st.subheader("🔄 Smart Rebalancing (AI Auto-Analysis)")
+
+    improvements = []
+
+    # Makan terlalu besar?
+    if percentages.get("Makan", 0) > 35:
+        improvements.append(
+            "Kategori **Makan** terlalu besar. Pertimbangkan meal-prep atau kombinasikan masak sendiri untuk tekan biaya."
+        )
+
+    # Transport terlalu besar?
+    if percentages.get("Transport", 0) > 25:
+        improvements.append(
+            "Transport memakan porsi besar. Bisa coba langganan bulanan, jalan kaki jarak dekat, atau sharing cost."
+        )
+
+    # Hiburan check
+    if percentages.get("Hiburan", 0) > 20:
+        improvements.append(
+            "Hiburan agak tinggi. Coba pakai budget cap mingguan atau aktivitas low-cost bareng teman."
+        )
+
+    if improvements:
+        for x in improvements:
+            st.write(f"- {x}")
+    else:
+        st.success("Struktur anggaranmu sudah optimal banget 🎯")
+
+# ================================
+# 🌟 ADVISOR PANEL — PART 2
+# Advanced Visuals & Behavioral Insights
+# ================================
+if (
+    st.session_state.get("final_budget") is not None
+    and st.session_state.get("baseline") is not None
+    and st.session_state.get("detected_prefs") is not None
+):
+    st.markdown("---")
+    st.markdown("## 🌟 Deep Behavioral & Visual Insights")
+
+    baseline = st.session_state["baseline"]
+    final_state = st.session_state["final_budget"]
+    income = st.session_state.get("detected_income", 0)
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    # ============================================================
+    # 1. FINANCIAL HEALTH SCORE (0–100)
+    # ============================================================
+    st.subheader("💚 Financial Health Score")
+
+    total_final = sum(final_state.values())
+    tabungan = final_state.get("Tabungan", 0)
+    makan = final_state.get("Makan", 0)
+    hiburan = final_state.get("Hiburan", 0)
+
+    score = 0
+    # Tabungan
+    if tabungan >= income * 0.15:
+        score += 40
+    elif tabungan >= income * 0.10:
+        score += 30
+    else:
+        score += 10
+
+    # Beban makan
+    if makan <= income * 0.30:
+        score += 30
+    else:
+        score += 10
+
+    # Hiburan
+    if hiburan <= income * 0.15:
+        score += 20
+    else:
+        score += 10
+
+    # Cadangan / keseimbangan
+    structure_ok = all(v > 0 for v in final_state.values())
+    score += 10 if structure_ok else 0
+
+    st.metric("Skor Kesehatan Finansial", f"{score}/100")
+
+    # ============================================================
+    # 2. FINANCIAL RADAR CHART
+    # ============================================================
+    st.subheader("🕸 Financial Radar Chart (Balanced Structure)")
+
+    categories = list(final_state.keys())
+    values = list(final_state.values())
+
+    # Normalisasi menjadi 0–1 untuk radar chart
+    max_val = max(values)
+    radar_vals = [v / max_val for v in values]
+
+    # Tutup loop radar
+    radar_vals += radar_vals[:1]
+    angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
+    angles += angles[:1]
+
+    fig_radar = plt.figure(figsize=(6, 6))
+    ax_radar = fig_radar.add_subplot(111, polar=True)
+    ax_radar.plot(angles, radar_vals, linewidth=2)
+    ax_radar.fill(angles, radar_vals, alpha=0.3)
+
+    ax_radar.set_xticks(angles[:-1])
+    ax_radar.set_xticklabels(categories)
+    ax_radar.set_title("Financial Structure Radar", pad=20)
+
+    st.pyplot(fig_radar)
+
+    # ============================================================
+    # 3. SPENDING CONSISTENCY GAUGE
+    # ============================================================
+    st.subheader("🎯 Spending Consistency Gauge")
+
+    diffs = []
+    for c in final_state:
+        before = baseline[c]
+        after = final_state[c]
+        change = abs(after - before) / max(before, 1)
+        diffs.append(change)
+
+    consistency = 100 - min(100, sum(diffs) / len(diffs) * 100)
+
+    st.metric("Konsistensi anggaran sebelum → sesudah", f"{consistency:.1f}%")
+
+    # ============================================================
+    # 4. DAILY–WEEKLY–MONTHLY OPTIMAL SPENDING MODEL
+    # ============================================================
+    st.subheader("📅 Optimal Spending Model (Daily / Weekly / Monthly)")
+
+    daily_limit = income / 30
+    weekly_limit = income / 4
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Daily Safe Limit", f"Rp {daily_limit:,.0f}")
+    with col2:
+        st.metric("Weekly Safe Limit", f"Rp {weekly_limit:,.0f}")
+    with col3:
+        st.metric("Monthly Income", f"Rp {income:,.0f}")
+
+    # ============================================================
+    # 5. MICRO-HABIT SUGGESTIONS (AI-like deterministic)
+    # ============================================================
+    st.subheader("🌱 Micro Habit Suggestions (Mudah Dilakukan Harian)")
+
+    habits = []
+
+    if tabungan < income * 0.10:
+        habits.append("Set auto-transfer tabungan Rp 10.000 setiap pagi.")
+    habits.append("Catat 3 pengeluaran terbesar harian, untuk lihat pola boros.")
+    if makan > income * 0.30:
+        habits.append("Masak 2× seminggu untuk hemat biaya makan.")
+    if hiburan > income * 0.15:
+        habits.append("Buat 'No Spend Day' sekali seminggu.")
+    habits.append(
+        "Gunakan dompet terpisah: sehari maksimal Rp 20.000 untuk jajan kecil."
+    )
+
+    for h in habits:
+        st.write(f"- {h}")
+
+    # ============================================================
+    # 6. HIGH-IMPACT IMPROVEMENTS (Prioritization Engine)
+    # ============================================================
+    st.subheader("🚀 High Impact Improvements")
+
+    impacts = []
+
+    # Jika tabungan kecil
+    if tabungan < income * 0.10:
+        impacts.append("Tingkatkan tabungan minimal ke 10% income untuk safety net.")
+
+    # Jika makan tinggi
+    if makan > income * 0.35:
+        impacts.append("Turunkan budget makan 5–10% lewat meal-prep / masak rutin.")
+
+    # Jika hiburan terlalu besar
+    if hiburan > income * 0.20:
+        impacts.append("Buat batas hiburan mingguan dan pakai aplikasi pengingat.")
+
+    # Jika tidak ada masalah
+    if not impacts:
+        st.success("Strukturnya sudah optimal! Tinggal dipertahankan 🎉")
+    else:
+        for x in impacts:
+            st.write(f"- {x}")
 
 
 # =====================================================
@@ -694,15 +918,19 @@ st.subheader("⚙️ Terapkan Baseline ke Optimization Engine")
 if st.button("🚀 Jalankan Optimasi"):
     # --- PERBAIKAN: Cek apakah nilainya None, bukan cuma cek key-nya ---
     if st.session_state.get("baseline") is None:
-        st.warning("❗ Baseline AI belum tersedia. Lanjut chat dulu sampai tabel baseline muncul ya!")
+        st.warning(
+            "❗ Baseline AI belum tersedia. Lanjut chat dulu sampai tabel baseline muncul ya!"
+        )
     elif st.session_state.get("detected_income") is None:
-        st.warning("❗ Income belum terdeteksi. Pastikan Anda menyebutkan penghasilan saat chat.")
+        st.warning(
+            "❗ Income belum terdeteksi. Pastikan Anda menyebutkan penghasilan saat chat."
+        )
     else:
         with st.spinner("Menjalankan solver..."):
             # Pastikan mengambil nilai default jika target/delta belum ada
             tgt = st.session_state.get("target_tabungan", 0)
             dlt = st.session_state.get("delta", 50000)
-            
+
             pipe = run_solver_pipeline(
                 baseline_dict=st.session_state["baseline"],
                 income=st.session_state["detected_income"],
@@ -710,10 +938,10 @@ if st.button("🚀 Jalankan Optimasi"):
                 target_tabungan=tgt,
                 delta=dlt,
             )
-            
+
         st.session_state["solver_output"] = pipe
         st.success("🎉 Optimasi selesai!")
-        
+
         # Tampilkan hasil JSON pipeline
         st.json(pipe)
 
