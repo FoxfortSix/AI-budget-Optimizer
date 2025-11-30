@@ -209,35 +209,82 @@ Jawaban harus casual, hangat, dan tidak terlalu panjang.
     return response_text.strip()
 
 
-# ------------------------------------------------------------
-# ASK_AI_UNTIL_READY — bagian terpenting S3 Chat Engine
-# ------------------------------------------------------------
 def ask_ai_until_ready(user_text: str) -> Dict[str, Any]:
-    reply = ai_chat(user_text)
+    """
+    Mengirim pesan user ke AI, lalu mengecek apakah AI merasa data sudah lengkap.
+    Baseline baru akan muncul jika AI secara eksplisit bilang "READY".
+    """
 
-    # Step 1 — Detect income if not yet
-    if st.session_state["detected_income"] is None:
-        detected = try_detect_income(user_text)
-        if detected:
-            st.session_state["detected_income"] = detected
+    # 1. Simpan pesan user ke history (sudah dilakukan di main loop, tapi kita butuh teks lengkap)
+    conversation_history = ""
+    for m in st.session_state["messages"]:
+        role = m["role"].upper()
+        content = m["content"]
+        conversation_history += f"{role}: {content}\n"
 
-    # Step 2 — Detect preferences
-    if st.session_state["detected_prefs"] is None:
-        full_text = "\n".join(
-            m["content"] for m in st.session_state["messages"] if m["role"] == "user"
-        )
-        st.session_state["detected_prefs"] = interpret_preferences(full_text)
-
-    # 🔥 Step 3 — NEW: Ready condition
+    # Tambahkan pesan user terbaru jika belum masuk history session state
+    # (di main loop biasanya sudah di-append, tapi untuk safety kita cek)
     if (
-        st.session_state["detected_income"] is not None
-        and st.session_state["detected_prefs"] is not None
+        not st.session_state["messages"]
+        or st.session_state["messages"][-1]["content"] != user_text
     ):
+        conversation_history += f"USER: {user_text}\n"
+
+    # 2. PROMPT KHUSUS: Minta AI jawab ganda (Reply Chat + Status Ready)
+    system_prompt = """
+    Kamu adalah AI Budget Assistant. Tugasmu mengumpulkan 2 informasi vital:
+    1. INCOME bulanan (nominal angka).
+    2. PREFERENSI gaya hidup (hemat/sedang/mewah, prioritas makan/kos, dll).
+
+    Jika informasi BELUM lengkap, tanyakan kekurangannya dengan santai.
+    Jika SUDAH lengkap, berikan konfirmasi singkat bahwa kamu siap menghitung.
+
+    OUTPUT HARUS FORMAT JSON SAJA:
+    {
+      "reply_text": "jawaban ramah ke user...",
+      "is_info_complete": true/false
+    }
+    """
+
+    # Gabungkan prompt dan history
+    final_prompt = (
+        f"{system_prompt}\n\nRIWAYAT CHAT:\n{conversation_history}\n\nASSISTANT (JSON):"
+    )
+
+    # Panggil LLM dengan mode JSON
+    response_data = llm_json(final_prompt)
+
+    # Fallback jika error/gagal parse
+    if "error" in response_data:
+        # Gunakan mode teks biasa sebagai cadangan
+        fallback_reply = llm_text(conversation_history + "\nUSER: " + user_text)
+        return {
+            "reply_text": fallback_reply,
+            "ready": False,
+            "income": st.session_state["detected_income"],
+        }
+
+    # Ambil hasil analisis AI
+    reply_text = response_data.get("reply_text", "Maaf, bisa ulangi?")
+    is_ready = response_data.get("is_info_complete", False)
+
+    # 3. Update State Income (tetap kita coba detect manual buat jaga-jaga)
+    if st.session_state["detected_income"] is None:
+        detected_inc = try_detect_income(user_text)  # Fungsi regex lama
+        if detected_inc:
+            st.session_state["detected_income"] = detected_inc
+
+    # 4. Update Ready State HANYA jika AI bilang True DAN Income terdeteksi
+    # (Double check biar ga null pointer exception)
+    if is_ready and st.session_state["detected_income"] is not None:
         st.session_state["ai_ready_for_baseline"] = True
 
-    # Output
+        # Sekalian detect preferensi final
+        full_text_log = "\n".join([m["content"] for m in st.session_state["messages"]])
+        st.session_state["detected_prefs"] = interpret_preferences(full_text_log)
+
     return {
-        "reply_text": reply,
+        "reply_text": reply_text,
         "ready": st.session_state["ai_ready_for_baseline"],
         "income": st.session_state["detected_income"],
     }
