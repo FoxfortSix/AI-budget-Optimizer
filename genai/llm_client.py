@@ -17,7 +17,6 @@ import time
 import requests
 from typing import Dict, Any, Optional
 
-
 # ============================================================
 # KONFIGURASI GEMINI API
 # ============================================================

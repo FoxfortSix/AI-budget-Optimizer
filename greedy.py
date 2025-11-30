@@ -1,15 +1,4 @@
-# budget_optimizer/genai/greedy.py
-"""
-Greedy Optimizer (Local Search)
-------------------------------
-Fallback cepat ketika A* gagal atau lambat.
-
-Prinsip:
-- Jika spending terlalu besar → kurangi kategori terbesar dulu.
-- Jika spending terlalu kecil → naikkan kategori yang paling dekat minimum.
-- Jika target saving diberikan → arahkan ke income - spending mendekati target.
-
-"""
+# budget_optimizer/greedy.py
 
 from copy import deepcopy
 
@@ -18,85 +7,95 @@ def greedy_optimize(
     init_state, income, minimums, target=None, delta=50000, max_iter=300
 ):
     """
-    Greedy local adjustment:
-      - init_state : dict
-      - return dict:
-            {
-                "final_state": dict,
-                "method": "greedy",
-                "status": "...",
-                "trace": [...],
-            }
+    Greedy local adjustment (REVISI).
     """
 
     state = deepcopy(init_state)
     trace = []
 
+    if "tabungan" not in state:
+        state["tabungan"] = 0
+
     def total_spend(s):
         return sum(s.values())
 
-    def saving(s):
-        return income - total_spend(s)
-
-    # Loop terbatas (local improvement)
+    # Main Loop
     for i in range(max_iter):
         spend = total_spend(state)
-        save = income - spend
+        current_tabungan = state["tabungan"]
 
-        trace.append(
-            {"method": "greedy", "status": f"iter={i}, spend={spend}, saving={save}"}
-        )
+        # Trace dikit aja biar gak berat
+        # trace.append({"method": "greedy", "status": f"iter={i}, tab={current_tabungan}"})
 
         improved = False
 
         # --------------------------------------------------------------
-        # CASE 1 — Spending melebihi income → kurangi kategori terbesar
+        # PRIORITY 1: Kebutuhan Dasar (Jika di bawah minimum)
+        # --------------------------------------------------------------
+        violation_found = False
+        for cat, minv in minimums.items():
+            if state.get(cat, 0) < minv:
+                state[cat] += delta
+                improved = True
+                violation_found = True
+                break  # Fix satu per satu
+
+        if violation_found:
+            continue
+
+        # --------------------------------------------------------------
+        # PRIORITY 2: Overspending (Jika Total > Income)
         # --------------------------------------------------------------
         if spend > income:
-            biggest = max(state, key=lambda k: state[k])
-            new_val = state[biggest] - delta
+            # Kurangi kategori terbesar selain tabungan (jika mungkin)
+            # atau kurangi tabungan jika terpaksa
+            candidates = {k: v for k, v in state.items() if v > minimums.get(k, 0)}
 
-            # Pastikan tidak turun di bawah minimum
-            if new_val >= minimums.get(biggest, 0):
-                state[biggest] = new_val
+            if candidates:
+                # Prioritaskan mengurangi selain tabungan dulu jika tabungan belum over target
+                # Tapi kalau simpelnya: kurangi yang paling besar
+                biggest = max(candidates, key=candidates.get)
+                state[biggest] -= delta
                 improved = True
+            else:
+                # Stuck (sudah mentok minimum semua), break to avoid infinite loop
+                break
 
         # --------------------------------------------------------------
-        # CASE 2 — Target saving diberikan → dorong agar saving mendekati target
+        # PRIORITY 3: Target Tabungan (Kejar Target)
         # --------------------------------------------------------------
         elif target is not None and target > 0:
-            current_saving = save
+            diff = target - current_tabungan
 
-            # Jika saving kurang dari target → kecilkan kategori terbesar
-            if current_saving < target:
-                biggest = max(state, key=lambda k: state[k])
-                new_val = state[biggest] - delta
-                if new_val >= minimums.get(biggest, 0):
-                    state[biggest] = new_val
+            # Jika tabungan kurang dari target, dan masih ada sisa income
+            if diff > 0:
+                # Cek apakah budget masih cukup untuk nambah
+                if spend + delta <= income:
+                    state["tabungan"] += delta
                     improved = True
+                else:
+                    # Budget penuh, harus korbankan kategori lain demi tabungan?
+                    # Cari kategori non-esensial untuk dikurangi
+                    others = {
+                        k: v
+                        for k, v in state.items()
+                        if k != "tabungan" and v > minimums.get(k, 0)
+                    }
+                    if others:
+                        victim = max(others, key=others.get)
+                        state[victim] -= delta
+                        state["tabungan"] += delta
+                        improved = True
 
-            # Jika saving lebih dari target → naikkan kategori yang paling dekat minimum
-            elif current_saving > target:
-                smallest = min(state, key=lambda k: state[k] - minimums.get(k, 0))
-                state[smallest] += delta
-                improved = True
-
-        # --------------------------------------------------------------
-        # CASE 3 — Tidak ada target → sesuaikan ke minimal edge case
-        # --------------------------------------------------------------
-        else:
-            # Jika masih ada ruang (income - spend >= delta) → naikkan kategori terendah
-            if save >= delta:
-                smallest = min(state, key=lambda k: state[k])
-                state[smallest] += delta
-                improved = True
+            # Jika tabungan kebanyakan (jarang terjadi, tapi just in case)
+            elif diff < 0:  # tabungan > target
+                if state["tabungan"] - delta >= minimums.get("tabungan", 0):
+                    state["tabungan"] -= delta
+                    improved = True
 
         if not improved:
             break
 
-    # --------------------------------------------------------------
-    # Return
-    # --------------------------------------------------------------
     return {
         "final_state": state,
         "method": "greedy",

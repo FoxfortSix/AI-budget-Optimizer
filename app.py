@@ -319,9 +319,7 @@ def show_baseline_mode():
     income = st.session_state["detected_income"]
     prefs = st.session_state["detected_prefs"]
 
-    # -------------------------------------------
-    # Guard 1 — income missing
-    # -------------------------------------------
+    # --- Guard Clauses (Income & Prefs Check) ---
     if income is None:
         st.session_state["messages"].append(
             {
@@ -333,9 +331,6 @@ def show_baseline_mode():
         st.rerun()
         return
 
-    # -------------------------------------------
-    # Guard 2 — prefs missing
-    # -------------------------------------------
     if prefs is None or not isinstance(prefs, dict):
         st.session_state["messages"].append(
             {
@@ -347,87 +342,124 @@ def show_baseline_mode():
         st.rerun()
         return
 
-    # -------------------------------------------
-    # Build baseline
-    # -------------------------------------------
-    baseline = prefs_to_baseline(prefs, income, MINIMUMS)
+    # --- Build Baseline ---
+    # Kita cek dulu apakah baseline sudah ada di session biar tidak berubah-ubah saat slider digeser
+    if st.session_state["baseline"] is None:
 
-    st.write("### 💵 Baseline Awal")
-    st.json(baseline)
+        # IMPORT FUNGSI BARU DI SINI
+        from budget_optimizer.genai.preference_ai import generate_smart_baseline
 
-    if sum(baseline.values()) > income:
-        st.warning("⚠️ Baseline melebihi income. Aku auto-scale agar feasible.")
-        baseline = scale_down_to_income(baseline, income)
-
-    # Save baseline to session
-    st.session_state["baseline"] = baseline
-
-    st.write("### 💵 Baseline (Sudah di-scale)")
-    st.json(baseline)
-
-    if st.session_state.get("target_tabungan"):
-        st.info(
-            f"🎯 Target tabungan terdeteksi: Rp {st.session_state['target_tabungan']:,.0f}"
+        # Ambil teks chat history user untuk dianalisis
+        user_history_text = "\n".join(
+            [m["content"] for m in st.session_state["messages"] if m["role"] == "user"]
         )
 
+        with st.spinner("Sedang menghitung baseline berdasarkan angkamu..."):
+            # Panggil fungsi Smart Baseline yang baru
+            baseline = generate_smart_baseline(user_history_text, income)
 
-# Button → go to solver
-if st.button("Run Solver"):
-    # --- PERBAIKAN DI SINI: Cek dulu apakah baseline sudah ada ---
-    if st.session_state.get("baseline") is None:
-        st.error(
-            "⚠️ Data baseline belum lengkap! Silakan chat dengan AI dulu sampai tabel baseline muncul."
+        st.session_state["baseline"] = baseline
+
+    baseline = st.session_state["baseline"]
+
+    # Tampilkan Baseline Awal
+    st.write("### 💵 Baseline Awal (Sebelum Optimasi)")
+    st.json(baseline)
+
+    st.markdown("---")
+
+    # ============================================================
+    # 🔥 FITUR BARU: SLIDER TARGET TABUNGAN
+    # ============================================================
+    st.subheader("🎯 Tentukan Target Tabungan")
+
+    # Batas maksimal slider (misal 80% dari income agar logis)
+    max_saving_limit = int(income * 0.8)
+
+    # Ambil nilai default dari session state jika ada, atau 0
+    default_value = st.session_state.get("target_tabungan", 0)
+
+    # 1. Widget Slider
+    target_user = st.slider(
+        label="Geser untuk set target tabungan kamu bulan ini:",
+        min_value=0,
+        max_value=max_saving_limit,
+        value=default_value,
+        step=50000,  # Kelipatan 50rb biar enak
+        format="Rp %d",  # Format tampilan angka
+    )
+
+    # 2. Update Session State secara realtime
+    st.session_state["target_tabungan"] = target_user
+
+    # 3. Feedback Visual (Persentase)
+    pct_saving = (target_user / income) * 100
+    st.caption(
+        f"Target ini setara dengan **{pct_saving:.1f}%** dari total income kamu."
+    )
+
+    if pct_saving > 50:
+        st.warning(
+            "⚠️ Target di atas 50% mungkin bikin dompet 'sesak'. Pastikan kamu sanggup ya!"
         )
-    else:
-        # Jika baseline sudah ada, baru jalankan logika solver
 
-        # 1. Import dari path yang benar
-        from budget_optimizer.genai.ai_router import AIRouter
-        from budget_optimizer.config import MINIMUMS
+    st.markdown("---")
 
-        router = AIRouter()
+    # ============================================================
+    # TOMBOL RUN SOLVER
+    # ============================================================
+    if st.button("Run Solver"):
+        if st.session_state.get("baseline") is None:
+            st.error("⚠️ Data baseline belum lengkap!")
+        else:
+            from budget_optimizer.genai.ai_router import AIRouter
 
-        # 2. Siapkan data
-        baseline_data = st.session_state["baseline"]
-        income_val = st.session_state["detected_income"]
-        target_val = st.session_state.get("target_tabungan", 0)
-        delta_val = st.session_state.get("delta", 50000)
+            # HAPUS baris import MINIMUMS di sini agar tidak konflik scope
+            # from budget_optimizer.config import MINIMUMS  <-- INI PENYEBAB ERRORNYA
 
-        with st.spinner("Sedang mencari solusi anggaran terbaik..."):
-            result = router.solve(
-                state=baseline_data,
-                income=income_val,
-                minimums=MINIMUMS,
-                target=target_val,
-                delta=delta_val,
-            )
+            router = AIRouter()
+            baseline_data = st.session_state["baseline"]
 
-        # 3. Simpan hasil ke session state
-        st.session_state.final_budget = result.get("final_state")
-        st.session_state.solver_trace = result.get("trace")
-        st.session_state.solver_constraints = MINIMUMS
+            income_val = st.session_state["detected_income"]
+            target_val = st.session_state["target_tabungan"]
+            delta_val = st.session_state.get("delta", 50000)
 
-        # Simpan juga ke solver_output agar kompatibel dengan logika main loop
-        st.session_state["solver_output"] = {
-            "result": result,
-            "final_state": result.get("final_state"),
-        }
+            with st.spinner(
+                f"Mencari cara menabung Rp {target_val:,} tanpa menyiksa..."
+            ):
+                result = router.solve(
+                    state=baseline_data,
+                    income=income_val,
+                    minimums=MINIMUMS,  # Menggunakan global variable
+                    target=target_val,
+                    delta=delta_val,
+                )
 
-        st.success("Solver selesai dijalankan!")
-        st.rerun()  # Refresh agar UI berpindah ke tampilan hasil
+            # Simpan hasil
+            st.session_state.final_budget = result.get("final_state")
+            st.session_state.solver_trace = result.get("trace")
+            st.session_state.solver_constraints = MINIMUMS
+            st.session_state["solver_output"] = {
+                "result": result,
+                "final_state": result.get("final_state"),
+            }
+
+            st.success("Solver selesai dijalankan!")
+            st.rerun()
+
 
 # Bagian tampilan panel ini tetap di luar "if st.button" agar tetap muncul setelah rerun
-if st.session_state.get("final_budget") is not None:
-    with st.expander("🧮 Solver Panel", expanded=True):
+# if st.session_state.get("final_budget") is not None:
+#     with st.expander("🧮 Solver Panel", expanded=True):
 
-        st.subheader("Final Budget")
-        st.json(st.session_state.final_budget)
+#         st.subheader("Final Budget")
+#         st.json(st.session_state.final_budget)
 
-        st.subheader("Trace")
-        st.json(st.session_state.solver_trace)
+#         st.subheader("Trace")
+#         st.json(st.session_state.solver_trace)
 
-        st.subheader("Constraints")
-        st.json(st.session_state.solver_constraints)
+#         st.subheader("Constraints")
+#         st.json(st.session_state.solver_constraints)
 
 # ================================
 # 🔍 VISUALIZER PANEL (NEW PATCH)
@@ -454,15 +486,15 @@ if st.session_state.get("final_budget") is not None:
     # -------------------------------
     # 2. Constraints
     # -------------------------------
-    st.subheader("📏 Constraints yang Digunakan")
-    st.json(constraints)
+    # st.subheader("📏 Constraints yang Digunakan")
+    # st.json(constraints)
 
     # -------------------------------
     # 3. Solver Trace (Jika ada)
     # -------------------------------
-    if trace:
-        st.subheader("🧮 Solver Trace / Jalur Optimasi")
-        st.json(trace)
+    # if trace:
+    #     st.subheader("🧮 Solver Trace / Jalur Optimasi")
+    #     st.json(trace)
 
     # -------------------------------
     # 4. Visual Summary (Chart)
@@ -480,14 +512,44 @@ if (
     baseline_state = st.session_state["baseline"]
     final_state = st.session_state["final_budget"]
 
-    import matplotlib.pyplot as plt
+    import plotly.express as px
+    import pandas as pd
 
-    st.subheader("🥧 Final Budget Pie Chart")
+    st.subheader("🥧 Final Budget Distribution (Interactive)")
 
-    fig2, ax2 = plt.subplots(figsize=(6, 6))
-    ax2.pie(final_state.values(), labels=final_state.keys(), autopct="%1.1f%%")
-    ax2.set_title("Optimized Final Budget Distribution")
-    st.pyplot(fig2)
+    # Siapkan data dalam bentuk DataFrame agar lebih rapi
+    df_chart = pd.DataFrame(
+        {"Kategori": list(final_state.keys()), "Jumlah": list(final_state.values())}
+    )
+
+    # Hapus kategori yang nilainya 0 agar chart tidak penuh label kosong
+    df_chart = df_chart[df_chart["Jumlah"] > 0]
+
+    # Buat Donut Chart yang modern
+    fig_pie = px.pie(
+        df_chart,
+        values="Jumlah",
+        names="Kategori",
+        hole=0.4,  # Membuat lubang di tengah (Donut Chart)
+        color_discrete_sequence=px.colors.qualitative.Pastel,  # Palet warna pastel yang lembut
+        title="Alokasi Anggaran Final",
+    )
+
+    # Kustomisasi tampilan: Tampilkan persentase dan label di dalam slice
+    fig_pie.update_traces(
+        textposition="inside",
+        textinfo="percent+label",
+        hoverinfo="label+percent+value",  # Tooltip interaktif saat di-hover
+    )
+
+    # Rapikan layout
+    fig_pie.update_layout(
+        showlegend=False,  # Sembunyikan legenda agar lebih bersih
+        margin=dict(t=40, b=0, l=0, r=0),  # Kurangi margin kosong
+    )
+
+    # Tampilkan chart di Streamlit dengan lebar penuh
+    st.plotly_chart(fig_pie, use_container_width=True)
 
 # ================================
 # 🤝 ADVISOR PANEL (AI Suggestions) — FULL PACKAGE
@@ -600,8 +662,9 @@ if (
     # -----------------------------------------
     st.subheader("📈 Saving Projection (12 Bulan)")
 
-    if "Tabungan" in final_state:
-        monthly = final_state["Tabungan"]
+    # Gunakan huruf kecil "tabungan" sesuai config.py
+    if "tabungan" in final_state:
+        monthly = final_state["tabungan"]
         yearly = monthly * 12
         st.write(f"- Tabungan per bulan: **Rp {monthly:,.0f}**")
         st.write(f"- Jika konsisten selama 1 tahun: **Rp {yearly:,.0f}**")
@@ -664,9 +727,9 @@ if (
     st.subheader("💚 Financial Health Score")
 
     total_final = sum(final_state.values())
-    tabungan = final_state.get("Tabungan", 0)
-    makan = final_state.get("Makan", 0)
-    hiburan = final_state.get("Hiburan", 0)
+    tabungan = final_state.get("tabungan", 0)
+    makan = final_state.get("makan", 0)
+    hiburan = final_state.get("hiburan", 0)
 
     score = 0
     # Tabungan
@@ -700,29 +763,36 @@ if (
     # ============================================================
     st.subheader("🕸 Financial Radar Chart (Balanced Structure)")
 
+    # Siapkan data untuk Plotly
     categories = list(final_state.keys())
     values = list(final_state.values())
 
-    # Normalisasi menjadi 0–1 untuk radar chart
-    max_val = max(values)
-    radar_vals = [v / max_val for v in values]
+    df_radar = pd.DataFrame({"Kategori": categories, "Jumlah": values})
 
-    # Tutup loop radar
-    radar_vals += radar_vals[:1]
-    angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
-    angles += angles[:1]
+    # Buat Radar Chart interaktif
+    fig_radar = px.line_polar(
+        df_radar,
+        r="Jumlah",
+        theta="Kategori",
+        line_close=True,  # Menutup garis loop (jaring laba-laba)
+        title="Peta Keseimbangan Anggaran",
+    )
 
-    fig_radar = plt.figure(figsize=(6, 6))
-    ax_radar = fig_radar.add_subplot(111, polar=True)
-    ax_radar.plot(angles, radar_vals, linewidth=2)
-    ax_radar.fill(angles, radar_vals, alpha=0.3)
+    # Styling: Isi area dalam (fill), warna modern
+    fig_radar.update_traces(fill="toself", line_color="#00CC96")
 
-    ax_radar.set_xticks(angles[:-1])
-    ax_radar.set_xticklabels(categories)
-    ax_radar.set_title("Financial Structure Radar", pad=20)
+    # Layout cleaning
+    fig_radar.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                showticklabels=False,  # Sembunyikan angka sumbu agar tidak ruwet
+            )
+        ),
+        margin=dict(t=40, b=20, l=40, r=40),
+    )
 
-    st.pyplot(fig_radar)
-
+    st.plotly_chart(fig_radar, use_container_width=True)
     # ============================================================
     # 3. SPENDING CONSISTENCY GAUGE
     # ============================================================
@@ -865,87 +935,6 @@ def show_evaluator_panel():
 
 
 # ============================================================
-# PART 4 — SOLVER PIPELINE CONNECTOR
-# ============================================================
-
-
-def run_solver_pipeline(baseline_dict, income, minimums, target_tabungan, delta):
-    """
-    Proses lengkap dari baseline → normalized → AI Router → final state.
-    """
-    from budget_optimizer.models import State
-    from budget_optimizer.utils import normalize_state
-    from budget_optimizer.genai.ai_router import AIRouter
-
-    # ---------------------------------------
-    # 1. Baseline → State object
-    # ---------------------------------------
-    state = State(**baseline_dict)
-
-    # ---------------------------------------
-    # 2. Normalize (urang memastikan sum <= income)
-    # ---------------------------------------
-    normalized = normalize_state(state, income)
-
-    # ---------------------------------------
-    # 3. Run solver chain through AIRouter
-    # ---------------------------------------
-    router = AIRouter()
-    result = router.solve(
-        state=normalized.to_dict(),
-        income=income,
-        minimums=minimums,
-        target=target_tabungan,
-        delta=delta,
-    )
-
-    # Return dict for display layer
-    return {
-        "normalized": normalized.to_dict(),
-        "result": result,
-        "income": income,
-        "minimums": minimums,
-    }
-
-
-# ============================================================
-# PART 5 — APPLY BASELINE → RUN SOLVER
-# ============================================================
-
-st.subheader("⚙️ Terapkan Baseline ke Optimization Engine")
-
-# Tombol untuk menjalankan solver setelah baseline dibuat
-if st.button("🚀 Jalankan Optimasi"):
-    # --- PERBAIKAN: Cek apakah nilainya None, bukan cuma cek key-nya ---
-    if st.session_state.get("baseline") is None:
-        st.warning(
-            "❗ Baseline AI belum tersedia. Lanjut chat dulu sampai tabel baseline muncul ya!"
-        )
-    elif st.session_state.get("detected_income") is None:
-        st.warning(
-            "❗ Income belum terdeteksi. Pastikan Anda menyebutkan penghasilan saat chat."
-        )
-    else:
-        with st.spinner("Menjalankan solver..."):
-            # Pastikan mengambil nilai default jika target/delta belum ada
-            tgt = st.session_state.get("target_tabungan", 0)
-            dlt = st.session_state.get("delta", 50000)
-
-            pipe = run_solver_pipeline(
-                baseline_dict=st.session_state["baseline"],
-                income=st.session_state["detected_income"],
-                minimums=MINIMUMS,
-                target_tabungan=tgt,
-                delta=dlt,
-            )
-
-        st.session_state["solver_output"] = pipe
-        st.success("🎉 Optimasi selesai!")
-
-        # Tampilkan hasil JSON pipeline
-        st.json(pipe)
-
-# ============================================================
 # PART 6 — FINAL RESULT PANEL + VALIDATION LAYER
 # ============================================================
 
@@ -1048,7 +1037,6 @@ def show_final_result(result: dict):
 # ============================================================
 # PART 7 — MAIN CHAT LOOP (Chat Mode)
 # ============================================================
-
 st.header("💬 Chat dengan AI Budget Assistant")
 
 # 1) Render chat history
@@ -1061,11 +1049,10 @@ if user_input:
     # Simpan pesan user
     st.session_state["messages"].append({"role": "user", "content": user_input})
 
-    # Jika kita belum siap baseline, terus tanya AI
+    # A. Jika AI belum siap data (Income/Prefs belum lengkap)
     if not st.session_state["ai_ready_for_baseline"]:
         ai_output = ask_ai_until_ready(user_input)
 
-        # Tampilkan balasan AI
         with st.chat_message("assistant"):
             st.write(ai_output["reply_text"])
 
@@ -1073,53 +1060,24 @@ if user_input:
             {"role": "assistant", "content": ai_output["reply_text"]}
         )
 
-        # Jika setelah pesan ini kita siap baseline → render baseline mode
+        # Jika baru saja siap, reload agar status berubah
         if ai_output["ready"]:
-            st.session_state["detected_prefs"] = interpret_preferences(
-                "\n".join(
-                    m["content"]
-                    for m in st.session_state["messages"]
-                    if m["role"] == "user"
-                )
-            )
-            st.rerun()  # reload halaman dengan mode baseline aktif
+            st.rerun()
 
-    if (
-        st.session_state["ai_ready_for_baseline"]
-        and st.session_state["baseline"] is None
-    ):
-        show_baseline_mode()
-        st.stop()
+# --- LOGIKA TAMPILAN UTAMA (Di luar blok if user_input agar tetap muncul saat rerun) ---
 
-    # Jika siap baseline tapi baseline belum dibangun → masuk baseline mode
-    elif st.session_state["baseline"] is None:
-        show_baseline_mode()
-        st.stop()
+# 1. Jika belum siap apa-apa -> Jangan lakukan apa-apa (tunggu chat)
+if not st.session_state["ai_ready_for_baseline"]:
+    pass
 
-    if (
-        st.session_state["ai_ready_for_baseline"]
-        and st.session_state["baseline"] is None
-    ):
-        show_baseline_mode()
-        st.stop()
+# 2. Jika Solver SUDAH ada hasilnya -> Tampilkan Hasil
+elif st.session_state.get("solver_output") is not None:
+    # Opsional: Pesan transisi
+    # with st.chat_message("assistant"):
+    #    st.write("Berikut hasil optimasinya 👇")
+    show_final_result(st.session_state["solver_output"])
 
-    # Jika baseline sudah ada tapi solver belum jalan
-    elif st.session_state["solver_output"] is None:
-        with st.spinner("Menjalankan solver..."):
-            out = run_solver_pipeline(
-                baseline_dict=st.session_state["baseline"],
-                income=st.session_state["detected_income"],
-                minimums=MINIMUMS,
-                target_tabungan=st.session_state["target_tabungan"],
-                delta=st.session_state["delta"],
-            )
-        st.session_state["solver_output"] = out
-
-        with st.chat_message("assistant"):
-            st.write("Oke! Solver selesai. Mau lihat hasilnya?")
-
-    # Jika solver sudah ada → tampilkan
-    else:
-        with st.chat_message("assistant"):
-            st.write("Berikut hasil optimasinya 👇")
-        show_final_result(st.session_state["solver_output"])
+# 3. Jika Baseline SUDAH ada tapi Solver BELUM ada -> Tampilkan Slider & Tombol
+#    (Ini perbaikan utamanya: Kita panggil show_baseline_mode, BUKAN auto-run solver)
+elif st.session_state.get("ai_ready_for_baseline"):
+    show_baseline_mode()
